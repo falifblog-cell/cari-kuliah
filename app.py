@@ -1,108 +1,98 @@
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import youtube_transcript_api
+from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(page_title="Cari Kuliah", page_icon="🔍", layout="wide")
 
-# --- Fungsi Helper: Ekstrak ID Video dari URL ---
+# --- Fungsi Helper: Ekstrak ID Video ---
 def get_video_id(url):
-    """
-    Mengambil ID video YouTube dari pelbagai format URL (youtube.com atau youtu.be)
-    """
-    # Regex untuk mencari corak ID video
+    # Support format youtu.be dan youtube.com
     regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
     match = re.search(regex, url)
     if match:
         return match.group(1)
     return None
 
-# --- Fungsi Helper: Tukar masa (saat) ke format MM:SS ---
+# --- Fungsi Helper: Format Masa ---
 def format_time(seconds):
     mins = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{mins:02}:{secs:02}"
 
-# --- Title & Header ---
+# --- UI Layout ---
 st.title("🔍 Cari Isi Kuliah/Ceramah")
-st.markdown("Masukkan link YouTube, cari keyword, dan tonton terus pada minit tersebut.")
+st.markdown("Masukkan link YouTube (yang ada caption/CC), cari keyword, dan tonton.")
 
-# --- Sidebar: Input URL ---
+# --- Sidebar ---
 with st.sidebar:
-    st.header("1. Masukkan Link")
+    st.header("Langkah 1: Masukkan Link")
     video_url = st.text_input("YouTube URL", placeholder="https://youtube.com/watch?v=...")
     
+    # Butang Reset/Proses
     if st.button("Proses Video"):
         if video_url:
             video_id = get_video_id(video_url)
             if video_id:
                 st.session_state['video_id'] = video_id
-                st.session_state['transcript'] = None # Reset transcript lama
+                st.session_state['transcript'] = None 
                 
-                # Cuba dapatkan transcript
                 try:
-                    # Kita minta Bahasa Melayu (ms), Indonesia (id), atau English (en)
+                    # Kita guna format standard library
                     transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ms', 'id', 'en'])
                     st.session_state['transcript'] = transcript
-                    st.success("✅ Sari kata berjaya diambil!")
-                except TranscriptsDisabled:
-                    st.error("❌ Video ini tidak membenarkan sari kata (Subtitles disabled).")
-                except NoTranscriptFound:
-                    st.error("❌ Tiada sari kata auto-generated dijumpai untuk bahasa Melayu/Indo/English.")
+                    st.success("✅ Sari kata berjaya!")
+                except youtube_transcript_api.TranscriptsDisabled:
+                    st.error("❌ Video ini owner dia tutup function CC/Subtitle.")
+                except youtube_transcript_api.NoTranscriptFound:
+                    st.error("❌ Tiada sari kata Bahasa Melayu/Indo/English dalam video ni.")
                 except Exception as e:
-                    st.error(f"❌ Error: {e}")
+                    st.error(f"❌ Error pelik: {e}")
             else:
-                st.warning("⚠️ Link YouTube tidak sah.")
+                st.warning("⚠️ Link tak betul tu.")
 
-# --- Main Area ---
-
-# 1. Setup Video Player (Default start masa 0)
-if 'start_time' not in st.session_state:
-    st.session_state['start_time'] = 0
-
-# Jika ada video ID, paparkan video player di bahagian atas
+# --- Main Screen ---
 if 'video_id' in st.session_state:
+    # Set masa mula default
+    if 'start_time' not in st.session_state:
+        st.session_state['start_time'] = 0
+
+    # Player Video
     st.video(f"https://youtu.be/{st.session_state['video_id']}", start_time=st.session_state['start_time'])
     
-    # 2. Bahagian Carian
     st.divider()
-    st.header("2. Cari Keyword")
+    st.header("Langkah 2: Cari Keyword")
     
-    if 'transcript' in st.session_state and st.session_state['transcript']:
-        search_query = st.text_input("Taip perkataan (contoh: 'solat', 'hukum', 'niat')", "")
+    # Check kalau transcript wujud
+    if st.session_state.get('transcript'):
+        search_query = st.text_input("Cari perkataan (Contoh: solat, puasa, rasuah)", "")
         
         if search_query:
-            # Filter transcript berdasarkan keyword (case insensitive)
+            # Filter cari perkataan
             results = [t for t in st.session_state['transcript'] if search_query.lower() in t['text'].lower()]
             
-            st.write(f"Jumpa **{len(results)}** hasil carian:")
+            st.write(f"Jumpa **{len(results)}** tempat:")
             
-            # Paparkan hasil dalam bentuk senarai
+            # Loop untuk paparkan hasil
             for item in results:
-                col1, col2, col3 = st.columns([1, 4, 1])
+                c1, c2, c3 = st.columns([1, 4, 2])
                 
-                start_seconds = int(item['start'])
-                time_str = format_time(start_seconds)
-                text_content = item['text']
+                start_sec = int(item['start'])
+                txt = item['text']
                 
-                with col1:
-                    st.markdown(f"**⏱️ {time_str}**")
-                
-                with col2:
-                    # Highlight perkataan yang dicari
-                    highlighted_text = text_content.replace(search_query, f"**{search_query}**") # Simple bold
-                    st.markdown(f"_{highlighted_text}_")
-                
-                with col3:
-                    # Butang untuk lompat ke masa tersebut
-                    if st.button("▶️ Main", key=f"btn_{start_seconds}"):
-                        st.session_state['start_time'] = start_seconds
-                        st.rerun() # Refresh page untuk update player time
+                with c1:
+                    st.code(format_time(start_sec))
+                with c2:
+                    st.write(txt.replace(search_query, f"**{search_query}**"))
+                with c3:
+                    if st.button(f"▶️ Tonton ({format_time(start_sec)})", key=f"btn_{start_sec}"):
+                        st.session_state['start_time'] = start_sec
+                        st.rerun()
         else:
-            st.info("Sila taip sesuatu untuk mula mencari.")
-            
-    elif 'video_id' in st.session_state and st.session_state.get('transcript') is None:
-        st.write("Menunggu transcript...")
-
+            st.info("Taip sesuatu untuk cari.")
+    else:
+        st.warning("Video ada, tapi transcript tak dapat ditarik. Cuba video lain.")
+        
 else:
-    st.info("👈 Sila masukkan link YouTube di sidebar sebelah kiri untuk bermula.")
+    st.info("👈 Mula dengan masukkan link di menu sebelah kiri (Sidebar).")
