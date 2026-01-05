@@ -2,36 +2,52 @@ import streamlit as st
 import whisper
 import yt_dlp
 import os
-import time
+import glob
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(page_title="Cari Kuliah (AI Whisper)", page_icon="🎙️", layout="wide")
 
-# --- Fungsi: Download Audio dari YouTube ---
+# --- Fungsi: Download Audio (Versi Anti-Block 403) ---
 def download_audio(url):
+    # Padam fail lama jika ada
+    if os.path.exists("audio_temp.mp3"):
+        os.remove("audio_temp.mp3")
+        
     ydl_opts = {
         'format': 'bestaudio/best',
+        'outtmpl': 'audio_temp.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'outtmpl': 'audio_temp',  # Nama fail sementara
-        'quiet': True
+        'quiet': True,
+        'nocheckcertificate': True,
+        # --- TEKNIK MENYAMAR (SPOOFING) ---
+        # Kita beritahu YouTube kita ni Android Phone, bukan Python Script
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+                'player_skip': ['webpage', 'configs', 'js'], 
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
+        }
     }
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
+    
     return "audio_temp.mp3"
 
-# --- Fungsi: Format Masa ---
+# --- Fungsi Helper Lain ---
 def format_time(seconds):
     mins = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{mins:02}:{secs:02}"
 
-# --- Fungsi: Extract Video ID ---
 def get_video_id(url):
-    # Cara simple extract ID untuk display player
     if "v=" in url:
         return url.split("v=")[1].split("&")[0]
     elif "youtu.be/" in url:
@@ -40,16 +56,14 @@ def get_video_id(url):
 
 # --- UI Layout ---
 st.title("🎙️ Cari Kuliah (Tanpa CC)")
-st.markdown("Versi ini menggunakan **AI Whisper**. Ia boleh baca video walaupun TIADA subtitle.")
-st.warning("⚠️ Proses mungkin ambil masa 1-3 minit bergantung panjang video.")
+st.caption("Versi: Anti-Block 403 (Menyamar sebagai Android Client)")
 
 # --- Sidebar ---
 with st.sidebar:
     st.header("1. Masukkan Link")
     url = st.text_input("YouTube URL")
     
-    # Pilihan Model (Tiny laju tapi kurang tepat, Base lambat sikit tapi okay)
-    model_type = st.radio("Pilih Ketelitian AI:", ["tiny", "base"], index=0, help="'tiny' laju, 'base' lebih pandai.")
+    model_type = st.radio("Pilih Ketelitian AI:", ["tiny", "base"], index=0)
 
     if st.button("Mula Proses (AI Dengar)"):
         if url:
@@ -59,35 +73,33 @@ with st.sidebar:
             
             status = st.empty()
             try:
-                # 1. Download Audio
-                status.info("📥 Sedang download audio dari YouTube...")
+                # 1. Download
+                status.info("📥 Sedang 'curi' audio dari YouTube (Mode Android)...")
                 audio_file = download_audio(url)
                 
-                # 2. Load AI Model
+                # 2. Load AI
                 status.info(f"🤖 Sedang loading otak AI ({model_type})...")
                 model = whisper.load_model(model_type)
                 
                 # 3. Transcribe
-                status.info("👂 AI sedang mendengar dan menyalin... (Sila tunggu)")
+                status.info("👂 AI sedang mendengar... (Boleh ambil masa 2-3 minit)")
                 result = model.transcribe(audio_file)
                 
-                # Simpan result
                 st.session_state['transcript'] = result['segments']
-                status.success("✅ Siap! AI dah habis dengar.")
+                status.success("✅ Siap!")
                 
-                # Buang fail audio untuk jimat space
+                # Cleanup
                 if os.path.exists(audio_file):
                     os.remove(audio_file)
                     
             except Exception as e:
-                status.error(f"❌ Error: {e}")
+                status.error(f"❌ Masih Error: {e}")
+                st.error("Jika error 403 keluar juga, maksudnya YouTube dah ban IP server Streamlit ni. Kena cuba esok atau run di laptop sendiri.")
         else:
             st.warning("Masukkan link dulu.")
 
 # --- Main Area ---
 if 'video_id' in st.session_state and st.session_state.get('video_id'):
-    
-    # Player Video
     if 'start_time' not in st.session_state:
         st.session_state['start_time'] = 0
         
@@ -95,7 +107,6 @@ if 'video_id' in st.session_state and st.session_state.get('video_id'):
     
     st.divider()
     
-    # Bahagian Carian
     if 'transcript' in st.session_state and st.session_state['transcript']:
         st.header("2. Cari Keyword")
         search_query = st.text_input("Cari apa ustaz cakap:", "")
@@ -105,18 +116,16 @@ if 'video_id' in st.session_state and st.session_state.get('video_id'):
             st.write(f"Jumpa **{len(results)}** ayat:")
             
             for segment in results:
-                col1, col2, col3 = st.columns([1, 4, 2])
+                c1, c2, c3 = st.columns([1, 4, 2])
                 start_sec = int(segment['start'])
-                text = segment['text']
                 
-                with col1: st.code(format_time(start_sec))
-                with col2: st.write(text.replace(search_query, f"**{search_query}**"))
-                with col3:
+                with c1: st.code(format_time(start_sec))
+                with c2: st.write(segment['text'].replace(search_query, f"**{search_query}**"))
+                with c3:
                     if st.button(f"▶️ Dengar", key=f"btn_{start_sec}"):
                         st.session_state['start_time'] = start_sec
                         st.rerun()
         else:
-            # Show full transcript option
             with st.expander("Lihat Transkrip Penuh"):
                 for segment in st.session_state['transcript']:
                     st.write(f"[{format_time(segment['start'])}] {segment['text']}")
